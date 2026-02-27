@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
@@ -10,10 +11,7 @@ pub struct ImageViewer {
     loader: ImageLoader,
 
     // Image State
-    texture: Option<egui::TextureHandle>,
-    // current_path: Option<PathBuf>, // Currently unused
     error_msg: Option<String>,
-    is_loading: bool,
 
     // View State
     view_state: ViewState,
@@ -28,30 +26,89 @@ pub struct ImageViewer {
 
     // Config
     config: AppConfig,
+
+    // Caching and Preloading
+    current_image_path: Option<PathBuf>,
+    texture_cache: HashMap<PathBuf, egui::TextureHandle>,
+    loading_paths: HashSet<PathBuf>,
+    reset_view_on_load: bool,
 }
 
 impl ImageViewer {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         Self {
             loader: ImageLoader::new(cc.egui_ctx.clone()),
-            texture: None,
-            // current_path: None,
             error_msg: None,
-            is_loading: false,
             view_state: ViewState::default(),
             last_loaded_path: None,
             image_size: None,
             current_folder_images: Vec::new(),
             current_image_index: 0,
             config,
+            current_image_path: None,
+            texture_cache: HashMap::new(),
+            loading_paths: HashSet::new(),
+            reset_view_on_load: true,
         }
     }
 
-    fn load_file(&mut self, path: PathBuf) {
-        println!("UI: Requesting load for {:?}", path);
-        self.is_loading = true;
+    fn is_loading(&self) -> bool {
+        if let Some(path) = &self.current_image_path {
+            self.loading_paths.contains(path)
+        } else {
+            false
+        }
+    }
+
+    fn load_file(&mut self, path: PathBuf, reset_view: bool) {
+        self.current_image_path = Some(path.clone());
+        self.reset_view_on_load = reset_view;
         self.error_msg = None;
-        self.loader.tx.send(ImageCommand::Load(path)).unwrap();
+
+        self.request_load(path);
+        self.update_preloads();
+    }
+
+    fn request_load(&mut self, path: PathBuf) {
+        if !self.texture_cache.contains_key(&path) && !self.loading_paths.contains(&path) {
+            println!("UI: Requesting load for {:?}", path);
+            self.loading_paths.insert(path.clone());
+            self.loader.tx.send(ImageCommand::Load(path)).unwrap();
+        }
+    }
+
+    fn update_preloads(&mut self) {
+        if self.current_folder_images.is_empty() {
+            return;
+        }
+
+        let len = self.current_folder_images.len();
+        if len == 0 {
+            return;
+        }
+
+        let prev_idx = if self.current_image_index == 0 {
+            len - 1
+        } else {
+            self.current_image_index - 1
+        };
+        let next_idx = (self.current_image_index + 1) % len;
+
+        let prev_path = self.current_folder_images[prev_idx].clone();
+        let next_path = self.current_folder_images[next_idx].clone();
+
+        self.request_load(prev_path.clone());
+        self.request_load(next_path.clone());
+
+        // Cleanup cache: keep only current, prev, next
+        let mut keep_paths = HashSet::new();
+        if let Some(curr) = &self.current_image_path {
+            keep_paths.insert(curr.clone());
+        }
+        keep_paths.insert(prev_path);
+        keep_paths.insert(next_path);
+
+        self.texture_cache.retain(|k, _| keep_paths.contains(k));
     }
 
     fn load_path(&mut self, path: PathBuf) {
@@ -59,10 +116,10 @@ impl ImageViewer {
             self.load_folder_contents(&path);
             if self.current_folder_images.is_empty() {
                 self.error_msg = Some("No images found in the folder.".to_string());
-                self.texture = None;
+                self.current_image_path = None;
             } else {
                 self.current_image_index = 0;
-                self.load_file(self.current_folder_images[0].clone());
+                self.load_file(self.current_folder_images[0].clone(), true);
             }
         } else {
             if let Some(parent) = path.parent() {
@@ -77,7 +134,7 @@ impl ImageViewer {
                 self.current_folder_images = vec![path.clone()];
                 self.current_image_index = 0;
             }
-            self.load_file(path);
+            self.load_file(path, true);
         }
     }
 
@@ -118,7 +175,10 @@ impl ImageViewer {
         }
         self.current_image_index =
             (self.current_image_index + 1) % self.current_folder_images.len();
-        self.load_file(self.current_folder_images[self.current_image_index].clone());
+        self.load_file(
+            self.current_folder_images[self.current_image_index].clone(),
+            false,
+        );
     }
 
     fn prev_image(&mut self) {
@@ -130,7 +190,10 @@ impl ImageViewer {
         } else {
             self.current_image_index -= 1;
         }
-        self.load_file(self.current_folder_images[self.current_image_index].clone());
+        self.load_file(
+            self.current_folder_images[self.current_image_index].clone(),
+            false,
+        );
     }
 }
 
@@ -138,23 +201,33 @@ impl eframe::App for ImageViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // 1. Handle Async Results
         while let Ok(result) = self.loader.rx.try_recv() {
-            println!("UI: Received result");
-            self.is_loading = false;
             match result {
                 ImageResult::Success(path, image) => {
-                    println!("UI: Creating texture");
-                    self.last_loaded_path = Some(path.to_string_lossy().to_string());
-                    self.image_size = Some(image.size);
-                    self.texture =
-                        Some(ctx.load_texture("image", image, egui::TextureOptions::LINEAR));
-                    // Reset view
-                    self.view_state.reset();
+                    println!("UI: Received texture for {:?}", path);
+                    self.loading_paths.remove(&path);
 
-                    // Auto-fit logic could go here
+                    let texture = ctx.load_texture(
+                        path.to_string_lossy().to_string(),
+                        image.clone(),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.texture_cache.insert(path.clone(), texture);
+
+                    if Some(path.clone()) == self.current_image_path {
+                        self.last_loaded_path = Some(path.to_string_lossy().to_string());
+                        self.image_size = Some(image.size);
+                        if self.reset_view_on_load {
+                            self.view_state.reset();
+                            self.reset_view_on_load = false;
+                        }
+                    }
                 }
-                ImageResult::Error(err) => {
-                    println!("UI: Received Error: {}", err);
-                    self.error_msg = Some(err);
+                ImageResult::Error(path, err) => {
+                    println!("UI: Received Error for {:?}: {}", path, err);
+                    self.loading_paths.remove(&path);
+                    if Some(path) == self.current_image_path {
+                        self.error_msg = Some(err);
+                    }
                 }
             }
         }
@@ -171,17 +244,19 @@ impl eframe::App for ImageViewer {
         }
 
         // Handle Keyboard Navigation
-        if !self.current_folder_images.is_empty() && !self.is_loading {
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+        if !self.current_folder_images.is_empty() {
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::D)) {
                 self.next_image();
-            } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+            } else if ctx
+                .input(|i| i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::A))
+            {
                 self.prev_image();
             }
         }
 
         // 3. UI Layout
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.is_loading {
+            if self.is_loading() {
                 ui.centered_and_justified(|ui| ui.spinner());
                 // IMPORTANT: Do NOT return here if you want debug overlays or other persistent UI
                 // But generally for a modal loading screen, returning is fine,
@@ -194,7 +269,12 @@ impl eframe::App for ImageViewer {
                 return;
             }
 
-            if let Some(texture) = &self.texture {
+            let current_texture = self
+                .current_image_path
+                .as_ref()
+                .and_then(|p| self.texture_cache.get(p));
+
+            if let Some(texture) = current_texture {
                 let texture_size = texture.size_vec2();
                 // let available_size = ui.available_size(); // unused
 

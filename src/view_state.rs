@@ -27,6 +27,12 @@ impl ViewState {
     }
 
     pub fn process_input(&mut self, ui: &mut egui::Ui) {
+        // 0. Handle Double Click to Reset
+        if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+            self.target_zoom = 1.0;
+            self.target_pan = egui::Vec2::ZERO;
+        }
+
         // 1. Handle Zoom (Scroll)
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
 

@@ -9,7 +9,7 @@ pub enum ImageCommand {
 
 pub enum ImageResult {
     Success(PathBuf, egui::ColorImage),
-    Error(String),
+    Error(PathBuf, String),
 }
 
 pub struct ImageLoader {
@@ -53,8 +53,10 @@ impl ImageLoader {
                             }
                             Err(err) => {
                                 println!("Thread: Error decoding image: {}", err);
-                                let _ = tx_worker
-                                    .send(ImageResult::Error(format!("Load error: {}", err)));
+                                let _ = tx_worker.send(ImageResult::Error(
+                                    path.clone(),
+                                    format!("Load error: {}", err),
+                                ));
                             }
                         }
                         // Request repaint to update UI
