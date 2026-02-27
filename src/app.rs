@@ -19,6 +19,7 @@ pub struct ImageViewer {
     // Debug info
     last_loaded_path: Option<String>,
     image_size: Option<[usize; 2]>,
+    show_debug_info: bool,
 
     // Folder State
     current_folder_images: Vec<PathBuf>,
@@ -46,6 +47,7 @@ impl ImageViewer {
             view_state: ViewState::default(),
             last_loaded_path: None,
             image_size: None,
+            show_debug_info: false,
             current_folder_images: Vec::new(),
             current_image_index: 0,
             config,
@@ -254,11 +256,23 @@ impl eframe::App for ImageViewer {
         }
 
         // Handle Keyboard Navigation
+        if ctx.input(|i| i.key_pressed(egui::Key::F1)) {
+            self.show_debug_info = !self.show_debug_info;
+        }
+
         if !self.current_folder_images.is_empty() {
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::D)) {
+            // egui's key_pressed returns true repeatedly if the key is held down (key repeat).
+            // To only trigger once per physical press, we can check if it was pressed this frame
+            // but we actually want to avoid the OS key repeat.
+            // A simpler way in egui is to check `key_pressed` but we need to track if it was already handled.
+            // Actually, `key_pressed` in egui *does* repeat.
+            // To avoid repeat, we can track the previous frame's key state, or use `key_released`.
+            // Let's use `key_released` for single action per press.
+            if ctx.input(|i| i.key_released(egui::Key::ArrowRight) || i.key_released(egui::Key::D))
+            {
                 self.next_image();
             } else if ctx
-                .input(|i| i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::A))
+                .input(|i| i.key_released(egui::Key::ArrowLeft) || i.key_released(egui::Key::A))
             {
                 self.prev_image();
             }
@@ -304,29 +318,52 @@ impl eframe::App for ImageViewer {
                 );
 
                 // Debug overlay
-                ui.scope(|ui| {
-                    // Make it semi-transparent black
-                    // Accessing visuals directly is tricky without creating a proper Frame
-                    // Let's just use a window frame for simplicity or a simple label
-                    // To make it float on top, we draw it *after* image
+                if self.show_debug_info {
+                    ui.scope(|ui| {
+                        let debug_text = format!(
+                            "Zoom: {:.2}x\nPan: {:.0}, {:.0}\nSize: {}x{}",
+                            self.view_state.zoom,
+                            self.view_state.pan.x,
+                            self.view_state.pan.y,
+                            texture_size.x,
+                            texture_size.y
+                        );
 
-                    let debug_text = format!(
-                        "Zoom: {:.2}x\nPan: {:.0}, {:.0}\nSize: {}x{}",
-                        self.view_state.zoom,
-                        self.view_state.pan.x,
-                        self.view_state.pan.y,
-                        texture_size.x,
-                        texture_size.y
-                    );
+                        let pos = ui.clip_rect().min + egui::vec2(10.0, 10.0);
+                        let font_id = egui::FontId::monospace(14.0);
 
-                    ui.painter().text(
-                        ui.clip_rect().min + egui::vec2(10.0, 10.0),
-                        egui::Align2::LEFT_TOP,
-                        debug_text,
-                        egui::FontId::monospace(14.0),
-                        egui::Color32::YELLOW,
-                    );
-                });
+                        // Draw text shadow/outline for better visibility
+                        let offsets = [
+                            egui::vec2(-1.0, -1.0),
+                            egui::vec2(0.0, -1.0),
+                            egui::vec2(1.0, -1.0),
+                            egui::vec2(-1.0, 0.0),
+                            egui::vec2(1.0, 0.0),
+                            egui::vec2(-1.0, 1.0),
+                            egui::vec2(0.0, 1.0),
+                            egui::vec2(1.0, 1.0),
+                        ];
+
+                        for offset in offsets {
+                            ui.painter().text(
+                                pos + offset,
+                                egui::Align2::LEFT_TOP,
+                                &debug_text,
+                                font_id.clone(),
+                                egui::Color32::BLACK,
+                            );
+                        }
+
+                        // Draw main text
+                        ui.painter().text(
+                            pos,
+                            egui::Align2::LEFT_TOP,
+                            debug_text,
+                            font_id,
+                            egui::Color32::YELLOW,
+                        );
+                    });
+                }
             } else {
                 ui.centered_and_justified(|ui| {
                     if ui.button("Open Image or Folder").clicked() {
