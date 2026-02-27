@@ -1,6 +1,7 @@
 use eframe::egui;
 use std::path::PathBuf;
 
+use crate::config::AppConfig;
 use crate::image_loader::{ImageCommand, ImageLoader, ImageResult};
 use crate::view_state::ViewState;
 
@@ -20,10 +21,13 @@ pub struct ImageViewer {
     // Debug info
     last_loaded_path: Option<String>,
     image_size: Option<[usize; 2]>,
+
+    // Config
+    config: AppConfig,
 }
 
 impl ImageViewer {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         Self {
             loader: ImageLoader::new(cc.egui_ctx.clone()),
             texture: None,
@@ -33,6 +37,7 @@ impl ImageViewer {
             view_state: ViewState::default(),
             last_loaded_path: None,
             image_size: None,
+            config,
         }
     }
 
@@ -162,5 +167,31 @@ impl eframe::App for ImageViewer {
                     });
             }
         });
+
+        // Save window state periodically or on close
+        let window_info = ctx.input(|i| i.viewport().clone());
+        let mut changed = false;
+
+        if let Some(pos) = window_info.inner_rect.map(|r| r.min) {
+            let new_pos = [pos.x, pos.y];
+            if self.config.window_pos != Some(new_pos) {
+                self.config.window_pos = Some(new_pos);
+                changed = true;
+            }
+        }
+
+        if let Some(size) = window_info.inner_rect.map(|r| r.size()) {
+            let new_size = [size.x, size.y];
+            if self.config.window_size != Some(new_size) {
+                self.config.window_size = Some(new_size);
+                changed = true;
+            }
+        }
+
+        // In a real app, you might want to debounce this save operation
+        // or only save on exit. For simplicity, we save when it changes.
+        if changed {
+            self.config.save();
+        }
     }
 }
