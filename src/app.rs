@@ -2,6 +2,7 @@ use eframe::egui;
 use std::path::PathBuf;
 
 use crate::image_loader::{ImageCommand, ImageLoader, ImageResult};
+use crate::view_state::ViewState;
 
 pub struct ImageViewer {
     // Communication
@@ -14,8 +15,7 @@ pub struct ImageViewer {
     is_loading: bool,
 
     // View State
-    zoom: f32,
-    pan: egui::Vec2,
+    view_state: ViewState,
 
     // Debug info
     last_loaded_path: Option<String>,
@@ -30,8 +30,7 @@ impl ImageViewer {
             // current_path: None,
             error_msg: None,
             is_loading: false,
-            zoom: 1.0,
-            pan: egui::Vec2::ZERO,
+            view_state: ViewState::default(),
             last_loaded_path: None,
             image_size: None,
         }
@@ -59,8 +58,7 @@ impl eframe::App for ImageViewer {
                     self.texture =
                         Some(ctx.load_texture("image", image, egui::TextureOptions::LINEAR));
                     // Reset view
-                    self.zoom = 1.0;
-                    self.pan = egui::Vec2::ZERO;
+                    self.view_state.reset();
 
                     // Auto-fit logic could go here
                 }
@@ -102,48 +100,11 @@ impl eframe::App for ImageViewer {
                 // let available_size = ui.available_size(); // unused
 
                 // 4. Zoom & Pan Logic
-                let (scroll, delta) = ui.input(|i| (i.smooth_scroll_delta, i.pointer.delta()));
-
-                // Handle Zoom
-                let zoom_factor = if scroll.y != 0.0 {
-                    1.0 + (scroll.y * 0.001)
-                } else {
-                    1.0
-                };
-
-                // Apply Zoom centered on mouse
-                if zoom_factor != 1.0 {
-                    let pointer_pos = ui
-                        .input(|i| i.pointer.hover_pos())
-                        .unwrap_or(ui.clip_rect().center());
-
-                    let old_zoom = self.zoom;
-                    self.zoom *= zoom_factor;
-                    // Clamp zoom
-                    self.zoom = self.zoom.max(0.01).min(500.0);
-
-                    // Math:
-                    // RelM = M - Center
-                    // Pan_new = RelM - (RelM - Pan_old) * (Zoom_new / Zoom_old)
-
-                    let center_screen = ui.clip_rect().center().to_vec2();
-                    let rel_m = pointer_pos.to_vec2() - center_screen;
-
-                    self.pan = rel_m - (rel_m - self.pan) * (self.zoom / old_zoom);
-                }
-
-                // Apply Pan (Mouse Drag)
-                let is_dragging = ui.input(|i| {
-                    i.pointer.button_down(egui::PointerButton::Primary)
-                        || i.pointer.button_down(egui::PointerButton::Middle)
-                });
-                if is_dragging {
-                    self.pan += delta;
-                }
+                self.view_state.process_input(ui);
 
                 // 5. Drawing
-                let center_pos = ui.clip_rect().center() + self.pan;
-                let final_size = texture_size * self.zoom;
+                let center_pos = ui.clip_rect().center() + self.view_state.pan;
+                let final_size = texture_size * self.view_state.zoom;
                 let image_rect = egui::Rect::from_center_size(center_pos, final_size);
 
                 ui.painter().image(
@@ -162,7 +123,11 @@ impl eframe::App for ImageViewer {
 
                     let debug_text = format!(
                         "Zoom: {:.2}x\nPan: {:.0}, {:.0}\nSize: {}x{}",
-                        self.zoom, self.pan.x, self.pan.y, texture_size.x, texture_size.y
+                        self.view_state.zoom,
+                        self.view_state.pan.x,
+                        self.view_state.pan.y,
+                        texture_size.x,
+                        texture_size.y
                     );
 
                     ui.painter().text(

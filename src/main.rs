@@ -1,5 +1,6 @@
 mod app;
 mod image_loader;
+mod view_state;
 
 use app::ImageViewer;
 
