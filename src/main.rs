@@ -7,9 +7,18 @@ mod view_state;
 
 use app::ImageViewer;
 use config::AppConfig;
+use std::path::PathBuf;
 
 fn main() -> eframe::Result<()> {
     let config = AppConfig::load();
+
+    // Parse command line arguments to get the initial image path
+    let args: Vec<String> = std::env::args().collect();
+    let initial_path = if args.len() > 1 {
+        Some(PathBuf::from(&args[1]))
+    } else {
+        None
+    };
 
     let mut viewport = eframe::egui::ViewportBuilder::default().with_drag_and_drop(true);
 
@@ -31,6 +40,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Better Image Viewer",
         options,
-        Box::new(|cc| Ok(Box::new(ImageViewer::new(cc, config)))),
+        Box::new(|cc| Ok(Box::new(ImageViewer::new(cc, config, initial_path)))),
     )
 }

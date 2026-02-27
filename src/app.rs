@@ -35,8 +35,12 @@ pub struct ImageViewer {
 }
 
 impl ImageViewer {
-    pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
-        Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: AppConfig,
+        initial_path: Option<PathBuf>,
+    ) -> Self {
+        let mut viewer = Self {
             loader: ImageLoader::new(cc.egui_ctx.clone()),
             error_msg: None,
             view_state: ViewState::default(),
@@ -49,7 +53,13 @@ impl ImageViewer {
             texture_cache: HashMap::new(),
             loading_paths: HashSet::new(),
             reset_view_on_load: true,
+        };
+
+        if let Some(path) = initial_path {
+            viewer.load_path(path);
         }
+
+        viewer
     }
 
     fn is_loading(&self) -> bool {
