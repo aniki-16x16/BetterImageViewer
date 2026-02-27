@@ -3,4 +3,18 @@ name = "better_image_viewer"
 version = "0.1.0"
 edition = "2024"
 
+# Enable optimizations for dependencies in debug mode
+[profile.dev.package."*"]
+opt-level = 3
+
 [dependencies]
+eframe = "0.29.1"
+image = { version = "0.25.5", features = [
+    "default",
+    "jpeg",
+    "png",
+    "webp",
+    "avif",
+    "rayon",
+] }
+rfd = "0.15.0"
