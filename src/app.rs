@@ -22,6 +22,10 @@ pub struct ImageViewer {
     last_loaded_path: Option<String>,
     image_size: Option<[usize; 2]>,
 
+    // Folder State
+    current_folder_images: Vec<PathBuf>,
+    current_image_index: usize,
+
     // Config
     config: AppConfig,
 }
@@ -37,6 +41,8 @@ impl ImageViewer {
             view_state: ViewState::default(),
             last_loaded_path: None,
             image_size: None,
+            current_folder_images: Vec::new(),
+            current_image_index: 0,
             config,
         }
     }
@@ -46,6 +52,85 @@ impl ImageViewer {
         self.is_loading = true;
         self.error_msg = None;
         self.loader.tx.send(ImageCommand::Load(path)).unwrap();
+    }
+
+    fn load_path(&mut self, path: PathBuf) {
+        if path.is_dir() {
+            self.load_folder_contents(&path);
+            if self.current_folder_images.is_empty() {
+                self.error_msg = Some("No images found in the folder.".to_string());
+                self.texture = None;
+            } else {
+                self.current_image_index = 0;
+                self.load_file(self.current_folder_images[0].clone());
+            }
+        } else {
+            if let Some(parent) = path.parent() {
+                self.load_folder_contents(parent);
+                if let Some(idx) = self.current_folder_images.iter().position(|p| p == &path) {
+                    self.current_image_index = idx;
+                } else {
+                    self.current_folder_images = vec![path.clone()];
+                    self.current_image_index = 0;
+                }
+            } else {
+                self.current_folder_images = vec![path.clone()];
+                self.current_image_index = 0;
+            }
+            self.load_file(path);
+        }
+    }
+
+    fn load_folder_contents(&mut self, folder_path: &std::path::Path) {
+        let mut images = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(folder_path) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                        let ext = ext.to_lowercase();
+                        if matches!(
+                            ext.as_str(),
+                            "jpg"
+                                | "jpeg"
+                                | "png"
+                                | "gif"
+                                | "webp"
+                                | "bmp"
+                                | "ico"
+                                | "tiff"
+                                | "avif"
+                        ) {
+                            images.push(p);
+                        }
+                    }
+                }
+            }
+        }
+        // Sort alphabetically
+        images.sort();
+        self.current_folder_images = images;
+    }
+
+    fn next_image(&mut self) {
+        if self.current_folder_images.is_empty() {
+            return;
+        }
+        self.current_image_index =
+            (self.current_image_index + 1) % self.current_folder_images.len();
+        self.load_file(self.current_folder_images[self.current_image_index].clone());
+    }
+
+    fn prev_image(&mut self) {
+        if self.current_folder_images.is_empty() {
+            return;
+        }
+        if self.current_image_index == 0 {
+            self.current_image_index = self.current_folder_images.len() - 1;
+        } else {
+            self.current_image_index -= 1;
+        }
+        self.load_file(self.current_folder_images[self.current_image_index].clone());
     }
 }
 
@@ -80,8 +165,17 @@ impl eframe::App for ImageViewer {
             if let Some(file) = dropped_files.first() {
                 // Check if the path is provided (it might not be on web, but this is native)
                 if let Some(path) = &file.path {
-                    self.load_file(path.clone());
+                    self.load_path(path.clone());
                 }
+            }
+        }
+
+        // Handle Keyboard Navigation
+        if !self.current_folder_images.is_empty() && !self.is_loading {
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                self.next_image();
+            } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                self.prev_image();
             }
         }
 
@@ -145,9 +239,9 @@ impl eframe::App for ImageViewer {
                 });
             } else {
                 ui.centered_and_justified(|ui| {
-                    if ui.button("Open Image").clicked() {
+                    if ui.button("Open Image or Folder").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.load_file(path);
+                            self.load_path(path);
                         }
                     }
                 });
@@ -163,7 +257,7 @@ impl eframe::App for ImageViewer {
                     .order(egui::Order::Background)
                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 40.0))
                     .show(ctx, |ui| {
-                        ui.colored_label(text_color, "Drag & Drop an image here");
+                        ui.colored_label(text_color, "Drag & Drop an image or folder here");
                     });
             }
         });
