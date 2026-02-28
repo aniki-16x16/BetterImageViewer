@@ -1,3 +1,4 @@
+use crate::animation::{exp_decay, exp_decay_vec2};
 use eframe::egui;
 
 pub struct ViewState {
@@ -27,14 +28,25 @@ impl ViewState {
     }
 
     pub fn process_input(&mut self, ui: &mut egui::Ui) {
+        let wants_pointer = ui.ctx().wants_pointer_input() || ui.ctx().is_pointer_over_area();
+
         // 0. Handle Double Click to Reset
-        if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+        if !wants_pointer
+            && ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            })
+        {
             self.target_zoom = 1.0;
             self.target_pan = egui::Vec2::ZERO;
         }
 
         // 1. Handle Zoom (Scroll)
-        let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+        let scroll_delta = if wants_pointer {
+            0.0
+        } else {
+            ui.input(|i| i.smooth_scroll_delta.y)
+        };
 
         if scroll_delta != 0.0 {
             // A typical mouse wheel click is 50 points.
@@ -59,10 +71,11 @@ impl ViewState {
         }
 
         // 2. Handle Pan (Mouse Drag)
-        let is_dragging = ui.input(|i| {
-            i.pointer.button_down(egui::PointerButton::Primary)
-                || i.pointer.button_down(egui::PointerButton::Middle)
-        });
+        let is_dragging = !wants_pointer
+            && ui.input(|i| {
+                i.pointer.button_down(egui::PointerButton::Primary)
+                    || i.pointer.button_down(egui::PointerButton::Middle)
+            });
 
         if is_dragging {
             let delta = ui.input(|i| i.pointer.delta());
@@ -71,20 +84,14 @@ impl ViewState {
         }
 
         // 3. Animate Zoom and Pan
-        let dt = ui.input(|i| i.unstable_dt).min(0.1);
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
         let speed = 15.0;
-        let t = 1.0 - (-speed * dt).exp();
 
-        let zoom_diff = (self.zoom - self.target_zoom).abs();
-        let pan_diff = (self.pan - self.target_pan).length();
+        let zoom_animating = exp_decay(&mut self.zoom, self.target_zoom, dt, speed);
+        let pan_animating = exp_decay_vec2(&mut self.pan, self.target_pan, dt, speed);
 
-        if zoom_diff > 0.001 || pan_diff > 0.1 {
-            self.zoom = self.zoom + (self.target_zoom - self.zoom) * t;
-            self.pan = self.pan + (self.target_pan - self.pan) * t;
+        if zoom_animating || pan_animating {
             ui.ctx().request_repaint(); // Keep repainting until animation finishes
-        } else {
-            self.zoom = self.target_zoom;
-            self.pan = self.target_pan;
         }
     }
 }

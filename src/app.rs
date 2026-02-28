@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::config::AppConfig;
 use crate::image_loader::{ImageCommand, ImageLoader, ImageResult};
 use crate::view_state::ViewState;
+use crate::thumbnail_list::{ThumbnailList, ThumbnailAction};
 
 pub struct ImageViewer {
     // Communication
@@ -15,6 +16,9 @@ pub struct ImageViewer {
 
     // View State
     view_state: ViewState,
+    
+    // Thumbnail List Component
+    thumbnail_list: ThumbnailList,
 
     // Debug info
     last_loaded_path: Option<String>,
@@ -37,16 +41,50 @@ pub struct ImageViewer {
     first_frame: bool,
 }
 
+fn setup_custom_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    
+    let font_paths = [
+        "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei
+        "C:\\Windows\\Fonts\\msyh.ttf",
+        "C:\\Windows\\Fonts\\simhei.ttf", // SimHei
+        "C:\\Windows\\Fonts\\simsun.ttc", // SimSun
+    ];
+    
+    let mut font_data = None;
+    for path in font_paths.iter() {
+        if let Ok(data) = std::fs::read(path) {
+            font_data = Some(data);
+            break;
+        }
+    }
+    
+    if let Some(data) = font_data {
+        fonts.font_data.insert(
+            "cjk".to_owned(),
+            egui::FontData::from_owned(data),
+        );
+        
+        fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "cjk".to_owned());
+        fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("cjk".to_owned());
+    }
+    
+    ctx.set_fonts(fonts);
+}
+
 impl ImageViewer {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         config: AppConfig,
         initial_path: Option<PathBuf>,
     ) -> Self {
+        setup_custom_fonts(&cc.egui_ctx);
+        
         let mut viewer = Self {
             loader: ImageLoader::new(cc.egui_ctx.clone()),
             error_msg: None,
             view_state: ViewState::default(),
+            thumbnail_list: ThumbnailList::new(&cc.egui_ctx),
             last_loaded_path: None,
             image_size: None,
             show_debug_info: false,
@@ -82,6 +120,8 @@ impl ImageViewer {
 
         self.request_load(path);
         self.update_preloads();
+        
+        self.thumbnail_list.update_folder(&self.current_folder_images, self.current_image_index);
     }
 
     fn request_load(&mut self, path: PathBuf) {
@@ -223,6 +263,9 @@ impl eframe::App for ImageViewer {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
             }
         }
+
+        // Process Thumbnail Loading
+        self.thumbnail_list.process_results(ctx, &self.current_folder_images, self.current_image_index);
 
         // 1. Handle Async Results
         while let Ok(result) = self.loader.rx.try_recv() {
@@ -413,6 +456,15 @@ impl eframe::App for ImageViewer {
                     .show(ctx, |ui| {
                         ui.colored_label(text_color, "Drag & Drop an image or folder here");
                     });
+            }
+
+            // Thumbnail List
+            if !self.current_folder_images.is_empty() {
+                let action = self.thumbnail_list.display(ui, &self.current_folder_images, self.current_image_index);
+                if let ThumbnailAction::SelectImage(idx) = action {
+                    self.current_image_index = idx;
+                    self.load_file(self.current_folder_images[self.current_image_index].clone(), false);
+                }
             }
         });
 

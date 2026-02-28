@@ -17,6 +17,20 @@ pub struct ImageLoader {
     pub rx: Receiver<ImageResult>,
 }
 
+pub enum ThumbnailCommand {
+    Load(PathBuf, u32), // Path, max dimension
+}
+
+pub enum ThumbnailResult {
+    Success(PathBuf, egui::ColorImage),
+    Error(PathBuf, String),
+}
+
+pub struct ThumbnailLoader {
+    pub tx: Sender<ThumbnailCommand>,
+    pub rx: Receiver<ThumbnailResult>,
+}
+
 impl ImageLoader {
     pub fn new(ctx: egui::Context) -> Self {
         let (tx_ui, rx_worker) = channel::<ImageCommand>();
@@ -72,6 +86,56 @@ impl ImageLoader {
                             }
                         }
                         // Request repaint to update UI
+                        ctx.request_repaint();
+                    }
+                }
+            }
+        });
+
+        Self {
+            tx: tx_ui,
+            rx: rx_ui,
+        }
+    }
+}
+
+impl ThumbnailLoader {
+    pub fn new(ctx: egui::Context) -> Self {
+        let (tx_ui, rx_worker) = channel::<ThumbnailCommand>();
+        let (tx_worker, rx_ui) = channel::<ThumbnailResult>();
+
+        thread::spawn(move || {
+            while let Ok(cmd) = rx_worker.recv() {
+                match cmd {
+                    ThumbnailCommand::Load(path, max_dim) => {
+                        let result = image::ImageReader::open(&path)
+                            .map_err(|e| image::ImageError::IoError(e))
+                            .and_then(|reader| {
+                                reader
+                                    .with_guessed_format()
+                                    .map_err(|e| image::ImageError::IoError(e))
+                            })
+                            .and_then(|reader| reader.decode());
+
+                        match result {
+                            Ok(dynamic_image) => {
+                                // Compute thumbnail
+                                let thumbnail = dynamic_image.thumbnail(max_dim, max_dim);
+                                let width = thumbnail.width() as usize;
+                                let height = thumbnail.height() as usize;
+                                let image_buffer = thumbnail.to_rgba8();
+                                let pixels = image_buffer.into_raw();
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                    [width, height],
+                                    &pixels,
+                                );
+
+                                let _ = tx_worker.send(ThumbnailResult::Success(path.clone(), color_image));
+                            }
+                            Err(err) => {
+                                let _ = tx_worker.send(ThumbnailResult::Error(path.clone(), err.to_string()));
+                            }
+                        }
                         ctx.request_repaint();
                     }
                 }

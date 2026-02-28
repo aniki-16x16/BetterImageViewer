@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod animation;
 mod app;
 mod config;
 mod image_loader;
+mod thumbnail_list;
 mod view_state;
 
 use app::ImageViewer;
