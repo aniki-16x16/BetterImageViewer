@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct AppConfig {
     pub window_pos: Option<[f32; 2]>,
     pub window_size: Option<[f32; 2]>,
+    pub is_maximized: Option<bool>,
 }
 
 impl Default for AppConfig {
@@ -14,6 +15,7 @@ impl Default for AppConfig {
         Self {
             window_pos: None,
             window_size: Some([800.0, 600.0]),
+            is_maximized: Some(false),
         }
     }
 }

@@ -33,6 +33,8 @@ pub struct ImageViewer {
     texture_cache: HashMap<PathBuf, egui::TextureHandle>,
     loading_paths: HashSet<PathBuf>,
     reset_view_on_load: bool,
+
+    first_frame: bool,
 }
 
 impl ImageViewer {
@@ -55,6 +57,7 @@ impl ImageViewer {
             texture_cache: HashMap::new(),
             loading_paths: HashSet::new(),
             reset_view_on_load: true,
+            first_frame: true,
         };
 
         if let Some(path) = initial_path {
@@ -211,6 +214,16 @@ impl ImageViewer {
 
 impl eframe::App for ImageViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.first_frame {
+            self.first_frame = false;
+            // Delay maximization to the first frame.
+            // This prevents winit bugs on Windows where setting size/position
+            // inside the builder conflicts with the maximized state.
+            if self.config.is_maximized == Some(true) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            }
+        }
+
         // 1. Handle Async Results
         while let Ok(result) = self.loader.rx.try_recv() {
             match result {
@@ -393,18 +406,35 @@ impl eframe::App for ImageViewer {
         let window_info = ctx.input(|i| i.viewport().clone());
         let mut changed = false;
 
-        if let Some(pos) = window_info.inner_rect.map(|r| r.min) {
-            let new_pos = [pos.x, pos.y];
-            if self.config.window_pos != Some(new_pos) {
-                self.config.window_pos = Some(new_pos);
-                changed = true;
+        let is_maximized = window_info.maximized.unwrap_or(false);
+        let is_minimized = window_info.minimized.unwrap_or(false);
+
+        // Only save position and size if not maximized and not minimized
+        if !is_maximized && !is_minimized {
+            // Usually it's better to save the outer position, but inner_rect is what eframe provides readily
+            if let Some(pos) = window_info.inner_rect.map(|r| r.min) {
+                // Ignore suspicious (0,0) or negative positions which might occur during window creation/snapping
+                if pos.x > -10000.0 && pos.y > -10000.0 {
+                    let new_pos = [pos.x, pos.y];
+                    if self.config.window_pos != Some(new_pos) {
+                        self.config.window_pos = Some(new_pos);
+                        changed = true;
+                    }
+                }
+            }
+
+            if let Some(size) = window_info.inner_rect.map(|r| r.size()) {
+                let new_size = [size.x, size.y];
+                if self.config.window_size != Some(new_size) {
+                    self.config.window_size = Some(new_size);
+                    changed = true;
+                }
             }
         }
 
-        if let Some(size) = window_info.inner_rect.map(|r| r.size()) {
-            let new_size = [size.x, size.y];
-            if self.config.window_size != Some(new_size) {
-                self.config.window_size = Some(new_size);
+        if let Some(is_max) = window_info.maximized {
+            if self.config.is_maximized != Some(is_max) {
+                self.config.is_maximized = Some(is_max);
                 changed = true;
             }
         }
