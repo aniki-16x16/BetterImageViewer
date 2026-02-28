@@ -28,7 +28,19 @@ impl ImageLoader {
                 match cmd {
                     ImageCommand::Load(path) => {
                         println!("Thread: Start loading {:?}", path);
-                        match image::open(&path) {
+                        // image::open attempts to infer the format from the file extension.
+                        // Sometimes files have incorrect extensions (e.g., a PNG named .jpg).
+                        // By using image::io::Reader, we can tell it to guess the format from the file content headers instead.
+                        let result = image::ImageReader::open(&path)
+                            .map_err(|e| image::ImageError::IoError(e))
+                            .and_then(|reader| {
+                                reader
+                                    .with_guessed_format()
+                                    .map_err(|e| image::ImageError::IoError(e))
+                            })
+                            .and_then(|reader| reader.decode());
+
+                        match result {
                             Ok(dynamic_image) => {
                                 let width = dynamic_image.width() as usize;
                                 let height = dynamic_image.height() as usize;

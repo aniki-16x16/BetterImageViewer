@@ -291,6 +291,20 @@ impl eframe::App for ImageViewer {
             }
         }
 
+        // Update Window Title based on current image
+        if let Some(path) = &self.current_image_path {
+            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                    "{} - Better Image Viewer",
+                    file_name
+                )));
+            }
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                "Better Image Viewer".to_string(),
+            ));
+        }
+
         // 3. UI Layout
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.is_loading() {
